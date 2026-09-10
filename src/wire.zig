@@ -75,6 +75,21 @@ pub const Descriptor = extern struct { address: u64 = 0, length: u32 = 0, flags:
 pub const Used = extern struct { head: u32 = 0, length: u32 = 0 };
 pub const Error = error{ UnsupportedFeatures, Invalid, Malformed, Stale, Busy, Exhausted };
 
+// A packed XRGB rectangle is represented by its first byte and the span
+// through its last row. Inter-row gaps stay pinned but are not transferred.
+pub fn uploadRegion(width: u32, height: u32, offset: u64, bytes: u64) Error!Rect {
+    if (width == 0 or height == 0 or offset & 3 != 0 or bytes == 0 or bytes & 3 != 0) return error.Invalid;
+    const pitch = @as(u64, width) * 4;
+    const extent = std.math.mul(u64, pitch, height) catch return error.Invalid;
+    if (offset >= extent or bytes > extent - offset) return error.Invalid;
+    const rows = (bytes - 1) / pitch + 1;
+    if (rows > height) return error.Invalid;
+    const rect = Rect{ .x = @intCast((offset % pitch) / 4), .y = @intCast(offset / pitch),
+        .width = @intCast(((bytes - 1) % pitch + 1) / 4), .height = @intCast(rows) };
+    if (!rect.fits(width, height)) return error.Invalid;
+    return rect;
+}
+
 // Only features backed by this implementation are acknowledged. In
 // particular, virgl/blobs/context-init/packed-rings are never inferred.
 pub fn features(offered: u64) Error!u64 {
@@ -169,6 +184,12 @@ test "modern features and reply lengths never imply unsupported GPU capabilities
     data.header.kind = @intFromEnum(Response.out_of_memory);
     try t.expectEqual(Response.out_of_memory, try reply(bytes, 24, 91, .display_info));
     try t.expect(!Rect.fits(.{ .x = 0xffff_fff0, .width = 32, .height = 1 }, 1280, 720));
+    try t.expectEqualDeep(Rect{ .x = 320, .y = 180, .width = 384, .height = 244 }, try uploadRegion(1280, 720, 180 * 5120 + 320 * 4, 243 * 5120 + 384 * 4));
+    try t.expectEqualDeep(Rect{ .width = 1280, .height = 720 }, try uploadRegion(1280, 720, 0, 1280 * 720 * 4));
+    try t.expectEqualDeep(Rect{ .x = 1279, .y = 719, .width = 1, .height = 1 }, try uploadRegion(1280, 720, 1280 * 720 * 4 - 4, 4));
+    try t.expectError(error.Invalid, uploadRegion(1280, 720, 4, 5120));
+    try t.expectError(error.Invalid, uploadRegion(1280, 720, 0, 3));
+    try t.expectError(error.Invalid, uploadRegion(1280, 720, std.math.maxInt(u64) - 3, 8));
 }
 
 test "cancel and malformed DMA completion retain ownership until validated completion or reset" {

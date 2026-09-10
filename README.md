@@ -1,19 +1,39 @@
 ﻿# VIRTGPU.R4D
 
-Independent modern Virtio-PCI 2D graphics driver for R4OS. Development for
-roadmap 0.79.8 is in progress; the initial module performs no hardware work
-and is excluded from normal images. Hardware support is not yet established.
+Original Apache-2.0 modern Virtio-PCI 2D driver for R4OS, developed in 0.79.8.
+The driver takes over a quiescent VGA-compatible Virtio GPU only when its BAR0
+matches the saved boot framebuffer. Firmware-owned Virtio queues are rejected.
+Unmatched devices and explicit software policy keep the common bootfb fallback.
 
-The implementation belongs here. PCI/DMA access, shared BO/fence ownership,
-display takeover and output publication use the platform's existing owners.
-Rendering policy and desktop behavior remain independent of QEMU/NVIDIA.
-Virtio command completion is not a physical VBlank or a 3D capability.
+The resident XRGB system BO, CPU-map arbitration, upload fences, exact output
+identities and display ownership use shared platform contracts. The driver
+negotiates VERSION_1 and optional EDID, configures a bounded split control
+queue, attaches physical pages, and executes fenced create/transfer/scanout/
+flush commands. Sparse frames upload their bounding rectangle. Configuration
+interrupts schedule the existing retained graphics worker, including while
+the display is idle; receiver changes invalidate old EDID identities.
 
-Build from an R4OS workspace using Build.bat (Windows) or ./Build.sh (Linux).
-Both invoke shared PowerShell 7 logic through local Settings.R4S mappings.
-The canonical manifest owns name, version, target and image scope. Workspace
-builds require the current local SDK, Contract and Libraries checkouts;
-dependency archive identities are inherited verified workspace fallbacks.
+The initial source surface retains its boot geometry. Host resize requests and
+EDID modes are receiver facts, not implemented native modesets. Rendering is
+CPU-based; completion denotes device execution, never visible VBlank, pageflip,
+NVIDIA acceleration, 3D or VRR. The first stage uses one serialized shadow BO
+and bounded synchronous control RPCs; later swapchain work can replace that
+policy through the same ownership contracts.
 
-Original implementation: Apache-2.0; see LICENSE, NOTICE and
-THIRD_PARTY_NOTICES.md. Technical German notes: DOCUMENTATION.de.txt.
+`Build.bat` / `./Build.sh` builds the driver through shared PS7 logic and mapped
+local SDK/Contract/Libraries checkouts. `unit-test` runs the two bounded wire,
+feature, rectangle and completion-lifetime cases. The manifest owns version,
+target and image scope. `IMAGE_SCOPE=none` deliberately keeps this test driver
+out of normal images; the explicit graphics profile includes it.
+
+With current Test artifacts built, run Distribution's `Build.bat graphics-test
+Test` / `./Build.sh graphics-test Test`. It verifies native pixels, repeated
+BO reuse, live host resize, injected timeout recovery and absent-device bootfb
+using four vCPUs. Optional variants are `native`, `timeout`, `fallback`, `probe`.
+`OPTION VIRTGPU mode=probe` performs transport/EDID discovery then teardown;
+`mode=timeout` is an explicit failure fixture. Default `mode=native` never
+injects a fault. Do not deploy the timeout fixture as a normal configuration.
+
+See `DOCUMENTATION.de.txt`, `LICENSE`, `NOTICE` and `THIRD_PARTY_NOTICES.md`.
+The normative protocol is OASIS Virtio 1.3, sections 2, 4.1 and 5.7. Linux/QEMU
+implementations remain external reference material and are not copied here.

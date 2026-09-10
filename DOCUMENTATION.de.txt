@@ -1,13 +1,104 @@
-﻿Virtio-GPU: Besitzer und Entwicklungsstand
-========================================
-Externer moderner Virtio-PCI-2D-Treiber in Arbeit fuer 0.79.8. Der aktuelle
-Anfangsstand meldet noch keine Hardwareunterstuetzung und bleibt IMAGE_SCOPE=none.
-Normative Grundlage: lokal gesicherte OASIS-Virtio-1.3-Spezifikation,
-Kapitel 2 (Queues), 4.1 (PCI) und 5.7 (GPU). Register-/Protokollfakten werden
-eigenstaendig implementiert. Keine Linux-/QEMU-GPL-Implementierung kopieren.
-Native Uebernahme muss den gemeinsamen DisplayManager unter echtem
-DriverApi-Owner binden, BOs bis nachweisbarem Hardwarestillstand behalten
-und den alten Firmwarewriter vor Set-Scanout sperren. Virtio-VGA-Reset kann
-laut Kapitel 5.7.7 die VGA-Kompatibilitaet wiederherstellen; zusaetzlich muss
-die Bindung zum konkreten gesicherten Boot-Framebuffer geprueft werden.
-Physische NVIDIA-/HDMI-Abnahmen sind keine Virtio-GPU-Abnahmen.
+﻿Virtio-GPU: nativer virtueller 2D-Treiber, 0.79.8
+================================================
+
+Besitz
+------
+VIRTGPU.R4D gehoert Drivers/VirtioGpu. Seine Aufgaben sind Virtio-PCI,
+Featureverhandlung, Controlqueue, Ressourcen-/Backingbefehle, Transfer,
+Set-Scanout, Flush und aktuelle Empfaengerabfrage. Der Kernel erhaelt keine
+Virtio-/QEMU-Register oder GPU-Befehle. Er behaelt die technisch zwingenden
+BO-, DMA-, CPU-Map-, Queue-, IRQ-/Worker- und Displaybesitzgrenzen.
+
+DriverApi28 erweitert den unveraenderten 584-Byte-Praefix um eine optionale
+Displayquery auf Offset584 (Gesamt592). Die neue 40-Byte-Tabelle bietet
+Bootinfo, Prepare, Transition und ein IRQ-faehiges Schedule. Der echte
+DriverApi-Owner authentifiziert und serialisiert Taskcallbacks; ein vom
+Aufrufer erfundener Owner ist kein Nachweis. Schedule nutzt eine begrenzte
+Mailbox unter dem Runtime-Owner, keine taskgebundenen BO-Mutexe im IRQ.
+
+Zulassung und Speicher
+----------------------
+Modernes PCI-Geraet 1af4:1050, VGA-Unterklasse, BAR0 gleich dem physisch
+verifizierten gesicherten Boot-FB; Status muss vor Initialisierung null sein.
+Kein blindes Firmware-Reset, keine BAR-Groessenprobe und keine Annahme ueber
+ein beliebiges PCI-Geraet. Unpassende Hardware und GRAPHICS=SOFTWARE bleiben
+bei bootfb. Protokollgrenze: VERSION_1 plus optional EDID, kein virgl/blob/
+packed-ring/context-init. Der erste aktive Ausgang wird verwendet.
+
+Maximal 64 MB gepacktes XRGB8888, 16384 seitenbegrenzte physische Segmente,
+eine Ressource und ein wiederverwendeter WB-Systempuffer. Access4 haelt nur
+physisches Attachment-Backing; GPU-VA bleibt null. Erst ein separates
+DeviceRead oder die gemeinsame Uploadqueue berechtigt den eigentlichen
+Transfer. CPU-Map und Uploadleser duerfen sich nicht ueberlappen. Der Kernel
+behaelt seine eigene BO-Referenz unabhaengig von R4D-Referenz und Attachment.
+
+Der gemeinsame MMIO-Mapper verwendet einen tatsaechlichen PAT-UC-Eintrag.
+Der uebliche Eintrag2 ist UC-minus und darf nicht als vollstaendiges UC
+gelten. Native WB-Systempuffer werden nicht ueber die Boot-FB-WC-Funktion
+umgetypt. Diese Cachekorrektur ist geraeteunabhaengig.
+
+Praesentation
+-------------
+Prepare validiert unveraenderte Bootgeometrie und haelt den Kandidaten.
+Commit sperrt zuerst Firmwarewriter, kopiert den letzten Bootinhalt einmal
+in den Schattenpuffer und laesst erst danach das R4D Set-Scanout ausfuehren.
+Normale Bilder schreiben direkt in das gehaltene WB-Backing. Geaenderte
+Rechtecke ergeben einen begrenzten Speicherbereich und einen Transfer ihrer
+Bounding-Box; Zeilenluecken bleiben gepinnt, werden aber nicht hochgeladen.
+Ein Quellenoffset und seine Laenge muessen ein gueltiges gepacktes Rechteck
+beschreiben. Erst bestaetigtes Transfer+Flush und Ressourcenfreigabe der
+gemeinsamen Fence erlauben den naechsten CPU-Schreibzugriff.
+
+Die Splitqueue verwendet 16 Deskriptorplaetze und eine gleichzeitig aktive
+Zweierkette. Fences steigen ohne Wiederverwendung bei Ueberlauf; Used-Index,
+Head, Replylaenge, Typ und Fence werden vor Wiederverwendung geprueft.
+Kurzes Polling geht in Task-Wait ueber, Control-RPCs laufen nie im IRQ.
+Ein einzelner Aufruf ist auf 2 Sekunden, die gemeinsame Queue auf 3 Sekunden
+und ihr Ressourcenwait auf 4 Sekunden begrenzt. Das ist ein 2D-Testtreiber
+mit einem Schattenpuffer, noch keine fertige asynchrone Swapchain.
+
+Ausgaenge und Fehler
+-------------------
+EDID wird nur nach Verhandlung abgefragt, kopiert und mit R4GFX ausgewertet.
+Unbekannte/unvollstaendige Erweiterungen bleiben als Warnungen erkennbar.
+Hostbreite/-hoehe sind von der aktuell festgehaltenen Startflaeche getrennt.
+GetDisplayInfo und EDID folgen auf konfigurierte INTx-Ereignisse im bestehenden
+Grafikworker; auch ein im Control-RPC gelesenes ISR-Bit wird weitergeleitet.
+Die Mailbox koalesziert Ereignisse, einschliesslich eines neuen Ereignisses
+waehrend laufendem Callback. Owner-, Device- und Resetgenerationen gelten.
+Unter Q35 werden die vorhandene PCI-Line sowie gemeinsame GSI16..23 nach
+dem bestehenden VirtioNet-Muster registriert; fremde ISR0-IRQs bleiben
+unhandled. Kein eigener IRQ-Router oder unbeschraenkter Dauerworker entsteht.
+
+Nach einer Empfaengeraenderung werden alte EDID-/Modusreferenzen ungueltig.
+Eine unveraenderte physische Route behaelt ihre aktive Festgeometrie auch
+bei geaenderter Empfaengergeneration. Ein fehlgeschlagener Refresh zieht
+veraltete Publikationen zurueck und sperrt den Transport.
+
+Logischer Cancel, Timeout und defekte Replies beweisen keinen DMA-Stillstand.
+Erst validierte Completion oder Status-null-Reset erlaubt die Freigabe.
+Der Virtio-VGA-Vertrag 5.7.7 stellt nach Gesamtreset den alten VGA-Modus
+wieder her; das gilt nur fuer das zuvor nachgewiesene Bootgeraet.
+Recovery stoppt die IRQ-Zulassung, synchronisiert deren Unregister, gibt
+Attachment, Treiberreferenz, Control-DMA und MMIO frei und stellt den alten
+PCI-Command-Wert ohne Echo der W1C-Statusbits wieder her. Der gemeinsame
+Display-/Queuebesitzer beendet danach seine Referenzen und aktiven Pins.
+Unklarer Stillstand oder fehlgeschlagene Freigabe behaelt den Besitzer und
+verhindert Firmwarezugriffe; ein weiterer Recoveryversuch bleibt moeglich.
+
+Pruefung und Grenzen
+-------------------
+Distribution/Build.sh graphics-test Test [native|timeout|fallback|probe]
+(unter Windows Build.bat) erstellt explizite frische Testmedien, vier vCPUs,
+kein Gastnetz, 90 Sekunden Gastlimit. Normale Builds starten das Profil nicht.
+VNC ist nur fuer Resize-Meldungen auf Loopback; QMP liest zwei PPM-Bilder.
+32 wechselnde Bilder, echte Pixelpruefung, zwei Idle-Resize-Meldungen,
+stabile BO-Zahlen und Timeout-/bootfb-Rueckfall gehoeren zum Profil.
+Die Tests sind kein Durchsatzbenchmark und keine Realhardwareabnahme.
+Konkrete Ergebnisse: Docs/Drivers/GrafikVirtio07908.txt und .json.
+
+Keine Aussage ueber NVIDIA, physisches HDMI/DP, HDMI-Audio, VBlank,
+Hardwarecursor, echte Pageflips, 3D, VRR oder neue produktive Bildschirmmodi.
+OssiPC ist laut User offline; der Treiber und seine QEMU-Abnahme greifen
+nicht auf ihn zu. Originalcode Apache2; fremde Parserdaten MIT mit
+vollstaendiger libdisplay-info-Provenienz im Libraries-Besitzer.
