@@ -1,0 +1,4 @@
+﻿Original R4OS implementation, created for roadmap 0.79.8 (10.09.2026).
+Module/build/host launch scaffolding follows the existing R4OS Example driver
+and SDK. No third-party driver implementation transferred. Protocol source:
+ExFiles/Reference/GFX/Specifications/Virtio-1.3.html, OASIS Virtio 1.3.

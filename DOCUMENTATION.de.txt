@@ -1,0 +1,13 @@
+﻿Virtio-GPU: Besitzer und Entwicklungsstand
+========================================
+Externer moderner Virtio-PCI-2D-Treiber in Arbeit fuer 0.79.8. Der aktuelle
+Anfangsstand meldet noch keine Hardwareunterstuetzung und bleibt IMAGE_SCOPE=none.
+Normative Grundlage: lokal gesicherte OASIS-Virtio-1.3-Spezifikation,
+Kapitel 2 (Queues), 4.1 (PCI) und 5.7 (GPU). Register-/Protokollfakten werden
+eigenstaendig implementiert. Keine Linux-/QEMU-GPL-Implementierung kopieren.
+Native Uebernahme muss den gemeinsamen DisplayManager unter echtem
+DriverApi-Owner binden, BOs bis nachweisbarem Hardwarestillstand behalten
+und den alten Firmwarewriter vor Set-Scanout sperren. Virtio-VGA-Reset kann
+laut Kapitel 5.7.7 die VGA-Kompatibilitaet wiederherstellen; zusaetzlich muss
+die Bindung zum konkreten gesicherten Boot-Framebuffer geprueft werden.
+Physische NVIDIA-/HDMI-Abnahmen sind keine Virtio-GPU-Abnahmen.
