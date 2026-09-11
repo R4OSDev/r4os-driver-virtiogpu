@@ -38,6 +38,12 @@ var irq_enabled = false;
 var irq_routes: [9]u8 = .{0xff} ** 9;
 var irq_count: usize = 0;
 var changes: u64 = 0;
+// Preserve the first failing teardown boundary for DriverShutdown's result.
+pub var shutdown_failure: i32 = 0;
+fn shutdownFailed(code: i32) bool {
+    if (shutdown_failure == 0) shutdown_failure = code;
+    return false;
+}
 
 pub fn init(driver_api: *const a.DriverApi, transport: *Transport, fault: bool) Error!void {
     if (api != null) return error.Busy;
@@ -211,7 +217,9 @@ fn commit(_: u64, _: u64, saved: *const a.GfxNativeBootInfo) callconv(.c) i32 {
     return 1;
 }
 fn restore(_: u64, _: u64, saved: *const a.GfxNativeBootInfo) callconv(.c) i32 {
-    if (!sameBoot(saved) or !resetForBoot() or !releaseStorage()) return 0;
+    if (!sameBoot(saved)) { _ = shutdownFailed(-20); return 0; }
+    if (!resetForBoot()) { _ = shutdownFailed(-14); return 0; }
+    if (!releaseStorage()) return 0;
     log("VIRTGPU recovery: OK reset=acknowledged boot-vga=restored frames={d} transferred={d}", .{ frames, transferred });
     return 1;
 }
@@ -254,18 +262,20 @@ fn finish(job: *const a.GfxDriverJob, success: bool) i32 {
     return if (queues.complete(&job.fence, if (success) a.gfx_queue_result_complete else a.gfx_queue_result_failed, quiesced) == a.gfx_queue_ok) 0 else -1;
 }
 pub fn shutdown() bool {
+    shutdown_failure = 0;
     if (api == null) return true;
     const ctx = context();
     if (transition.retained != 0) {
         var current: a.GfxNativeBootInfo = .{};
-        if (display.bootInfo(&current) != a.gfx_output_ok) return false;
+        if (display.bootInfo(&current) != a.gfx_output_ok) return shutdownFailed(-10);
         if (current.state != a.display_state_bootfb) {
             const operation: u32 = if (current.state == a.display_state_preparing) 1 else 2;
             const generation = if (operation == 1) transition.generation else current.generation;
-            if (display.transition(generation, operation, &transition) != a.gfx_output_ok or transition.retained != 0) return false;
+            if (display.transition(generation, operation, &transition) != a.gfx_output_ok) return shutdownFailed(-11);
+            if (transition.retained != 0) return shutdownFailed(-12);
         } else transition = .{};
     }
-    if (scanout_active) return false;
+    if (scanout_active) return shutdownFailed(-13);
     // Explicit detach/unref on orderly teardown; any failed command still
     // requires reset ACK before attachment, BO or transport storage release.
     if (gpu.ready and attached) {
@@ -276,13 +286,13 @@ pub fn shutdown() bool {
         const unref = wire.Resource{ .resource = resource };
         command(.unref, std.mem.asBytes(&unref)) catch {};
     }
-    if (!resetForBoot()) return false;
+    if (!resetForBoot()) return shutdownFailed(-14);
     if (binding.device_generation != 0) {
         const deadline = ctx.tickCount() +| @as(u64, @max(ctx.timerFrequency(), 1));
         while (true) {
             const rc = queues.unregister(&binding, 1);
             if (rc == a.gfx_queue_ok or rc == a.gfx_queue_error_unsupported) { binding = .{}; break; }
-            if (rc != a.gfx_queue_error_busy or ctx.tickCount() >= deadline) return false;
+            if (rc != a.gfx_queue_error_busy or ctx.tickCount() >= deadline) return shutdownFailed(-15);
             ctx.waitTicks(1);
         }
     }
@@ -291,16 +301,16 @@ pub fn shutdown() bool {
     return true;
 }
 fn releaseStorage() bool {
-    if (!stopInterrupts()) return false;
+    if (!stopInterrupts()) return shutdownFailed(-16);
     if (attachment.lease.id != 0) {
-        if (memory.deviceRelease(&attachment, 1) != a.gfx_buffer_result_ok) return false;
+        if (memory.deviceRelease(&attachment, 1) != a.gfx_buffer_result_ok) return shutdownFailed(-17);
         attachment = .{};
     }
     if (buffer.reference.id != 0) {
-        if (memory.bufferRelease(&buffer.reference) != a.gfx_buffer_result_ok) return false;
+        if (memory.bufferRelease(&buffer.reference) != a.gfx_buffer_result_ok) return shutdownFailed(-18);
         buffer = .{};
     }
-    if (!gpu.close()) return false;
+    if (!gpu.close()) return shutdownFailed(-19);
     return true;
 }
 fn log(comptime format: []const u8, args: anytype) void {

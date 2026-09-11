@@ -86,6 +86,13 @@ Display-/Queuebesitzer beendet danach seine Referenzen und aktiven Pins.
 Unklarer Stillstand oder fehlgeschlagene Freigabe behaelt den Besitzer und
 verhindert Firmwarezugriffe; ein weiterer Recoveryversuch bleibt moeglich.
 
+Seit 0.1.1 liefert DriverShutdown den ersten konkreten Abbaufehler:
+-10 Bootmetadaten, -11 Display-Transition abgelehnt, -12 Displaybesitz behalten,
+-13 Scanout noch aktiv, -14 Reset, -15 Queue-Abmeldung, -16 IRQ-Abmeldung,
+-17 Attachment-Lease, -18 BO-Referenz, -19 Transport-Abbau,
+-20 geaenderte Bootidentitaet. Nachfolgende Fehler ueberschreiben den ersten
+nicht; diese Diagnose ersetzt weder Hardware-Stillstand noch Freigabe.
+
 Pruefung und Grenzen
 -------------------
 Distribution/Build.sh graphics-test Test [native|timeout|fallback|probe]
@@ -99,6 +106,5 @@ Konkrete Ergebnisse: Docs/Drivers/GrafikVirtio07908.txt und .json.
 
 Keine Aussage ueber NVIDIA, physisches HDMI/DP, HDMI-Audio, VBlank,
 Hardwarecursor, echte Pageflips, 3D, VRR oder neue produktive Bildschirmmodi.
-OssiPC ist laut User offline; der Treiber und seine QEMU-Abnahme greifen
-nicht auf ihn zu. Originalcode Apache2; fremde Parserdaten MIT mit
+Die QEMU-Abnahme benoetigt OssiPC nicht. Originalcode Apache2; fremde Parserdaten MIT mit
 vollstaendiger libdisplay-info-Provenienz im Libraries-Besitzer.

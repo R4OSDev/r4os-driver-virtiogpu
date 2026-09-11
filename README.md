@@ -34,6 +34,13 @@ using four vCPUs. Optional variants are `native`, `timeout`, `fallback`, `probe`
 `mode=timeout` is an explicit failure fixture. Default `mode=native` never
 injects a fault. Do not deploy the timeout fixture as a normal configuration.
 
+Module 0.1.1 preserves the first failing shutdown boundary in its negative
+DriverShutdown result. Codes -10 through -20 distinguish boot metadata,
+display transition/retention, active scanout, reset, queue removal, IRQs,
+attachment, buffer reference, transport and changed boot identity. A failed
+hardware stop or release still retains ownership; these codes do not change
+the reset or cleanup protocol. See the German documentation for the mapping.
+
 See `DOCUMENTATION.de.txt`, `LICENSE`, `NOTICE` and `THIRD_PARTY_NOTICES.md`.
 The normative protocol is OASIS Virtio 1.3, sections 2, 4.1 and 5.7. Linux/QEMU
 implementations remain external reference material and are not copied here.

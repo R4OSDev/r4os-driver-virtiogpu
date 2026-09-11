@@ -37,7 +37,7 @@ export fn virtgpu_init(api: *const r4os.r4dev.DriverApi) callconv(.c) i32 {
 }
 
 export fn virtgpu_shutdown() callconv(.c) i32 {
-    if (!native.shutdown()) return -1;
+    if (!native.shutdown()) return native.shutdown_failure;
     return if (device.close()) 0 else -1;
 }
 
