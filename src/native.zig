@@ -268,12 +268,12 @@ pub fn shutdown() bool {
     if (transition.retained != 0) {
         var current: a.GfxNativeBootInfo = .{};
         if (display.bootInfo(&current) != a.gfx_output_ok) return shutdownFailed(-10);
-        if (current.state != a.display_state_bootfb) {
-            const operation: u32 = if (current.state == a.display_state_preparing) 1 else 2;
-            const generation = if (operation == 1) transition.generation else current.generation;
-            if (display.transition(generation, operation, &transition) != a.gfx_output_ok) return shutdownFailed(-11);
-            if (transition.retained != 0) return shutdownFailed(-12);
-        } else transition = .{};
+        // Bootfb may already be restored while cancellation still retains a
+        // CPU lease/queue/reference. Retry its exact token until cleanup ends.
+        const operation: u32 = if (current.state == a.display_state_preparing or current.state == a.display_state_bootfb) 1 else 2;
+        const generation = if (operation == 1) transition.generation else current.generation;
+        if (display.transition(generation, operation, &transition) != a.gfx_output_ok) return shutdownFailed(-11);
+        if (transition.retained != 0) return shutdownFailed(-12);
     }
     if (scanout_active) return shutdownFailed(-13);
     // Explicit detach/unref on orderly teardown; any failed command still
