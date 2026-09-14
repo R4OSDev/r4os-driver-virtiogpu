@@ -7,6 +7,7 @@ const wire = @import("wire.zig");
 const Transport = @import("transport.zig").Transport;
 const Error = @import("transport.zig").Error;
 const gfx = @import("r4gfx_outputs");
+const scanouts = @import("scanouts.zig");
 var api: ?*const a.DriverApi = null;
 var gpu: *Transport = undefined;
 var memory: r4os.driver_memory.Context = undefined;
@@ -40,6 +41,7 @@ var irq_count: usize = 0;
 var changes: u64 = 0;
 // Preserve the first failing teardown boundary for DriverShutdown's result.
 pub var shutdown_failure: i32 = 0;
+pub var init_stage: []const u8 = "interfaces";
 fn shutdownFailed(code: i32) bool {
     if (shutdown_failure == 0) shutdown_failure = code;
     return false;
@@ -54,6 +56,7 @@ pub fn init(driver_api: *const a.DriverApi, transport: *Transport, fault: bool) 
     outputs = ctx.graphicsOutputs() orelse return error.UnsupportedFeatures;
     display = ctx.graphicsDisplay() orelse return error.UnsupportedFeatures;
     if (display.bootInfo(&boot) != a.gfx_output_ok or boot.format != a.gfx_buffer_format_xrgb8888 or boot.policy != 0) return error.UnsupportedFeatures;
+    init_stage = "discover";
     try gpu.discover(driver_api);
     // Virtio's VGA compatibility contract restores VGA on whole-device reset.
     // Admit only the same physical VGA device that supplied the boot image.
@@ -61,18 +64,23 @@ pub fn init(driver_api: *const a.DriverApi, transport: *Transport, fault: bool) 
     if (gpu.pci.subclass != 0 or try gpu.framebufferBase() != boot.physical_address) return error.FirmwareOwned;
     bytes = @as(u64, boot.width) * boot.height * 4;
     if (boot.width == 0 or boot.height == 0 or bytes > 64 * 1024 * 1024 or bytes > boot.byte_length) return error.Invalid;
+    init_stage = "transport";
     try gpu.initialize(true);
     try gpu.getDisplayInfo(&info);
     var found = false;
-    for (info.modes[0..gpu.num_scanouts], 0..) |mode, index| if (mode.enabled != 0) {
+    for (info.modes[0..@min(gpu.num_scanouts, a.gfx_output_max_assignments)], 0..) |mode, index| if (mode.enabled != 0) {
         scanout = @intCast(index); found = true; break;
     };
     if (!found) return error.NotFound;
     const adapter = 0x0100_0000 | (@as(u32, gpu.pci.bus) << 8) | (@as(u32, gpu.pci.device) << 3) | gpu.pci.function;
-    const registration = a.GfxBackendRegistration{ .adapter_id = adapter, .milestone = a.gfx_queue_milestone_device_execution, .notify_callback = @intFromPtr(&notify) };
+    const registration = a.GfxBackendRegistration{ .adapter_id = adapter, .milestone = a.gfx_queue_milestone_device_execution,
+        .operations = 38, .notify_callback = @intFromPtr(&notify) }; // Barrier, primary upload and complete-image present.
+    init_stage = "backend";
     if (queues.register(&registration, &binding) != a.gfx_queue_ok) return error.Rejected;
     gpu.config_notify = configEvent;
+    init_stage = "catalog";
     try publishOutputs();
+    init_stage = "boot-storage";
     const descriptor = a.GfxBufferDescriptor{ .byte_length = bytes, .width = boot.width, .height = boot.height,
         .format = a.gfx_buffer_format_xrgb8888, .plane_count = 1, .plane_pitches = .{ @as(u64, boot.width) * 4, 0, 0, 0 },
         .usage = a.gfx_buffer_usage_cpu_read | a.gfx_buffer_usage_cpu_write | a.gfx_buffer_usage_transfer_source | a.gfx_buffer_usage_scanout };
@@ -105,13 +113,23 @@ pub fn init(driver_api: *const a.DriverApi, transport: *Transport, fault: bool) 
     var native = a.GfxNativeRegistration{ .backend = binding, .output = identities[scanout], .reference = buffer.reference,
         .commit_callback = @intFromPtr(&commit), .restore_callback = @intFromPtr(&restore) };
     @memcpy(native.name[0..7], "VIRTGPU");
+    init_stage = "boot-takeover";
     if (display.prepare(&native, &transition) != a.gfx_output_ok) return error.Rejected;
     if (display.transition(transition.generation, 0, &transition) != a.gfx_output_ok or transition.outcome != a.gfx_output_outcome_applied) return error.Rejected;
+    init_stage = "primary-output";
+    try scanouts.adoptPrimary(scanoutContext(), identities[scanout], scanout, transition.generation, boot.width, boot.height);
+    init_stage = "additional-outputs";
+    try scanouts.reconcile(scanoutContext(), &info, identities[0..gpu.num_scanouts], scanout);
+    init_stage = "interrupts";
     try registerInterrupts();
+    init_stage = "ready";
     configEvent(); // Catch an event arriving before interrupt admission.
     log("VIRTGPU native: OK adapter={x} scanout={d} mode={d}x{d} backing-pages={d} completion=device-execution vblank=unknown", .{ binding.adapter_id, scanout, boot.width, boot.height, count });
 }
 fn context() r4os.r4dev.DriverContext { return r4os.r4dev.DriverContext.init(api.?); }
+fn scanoutContext() scanouts.Context {
+    return .{ .gpu = gpu, .memory = &memory, .queue = &queues, .display = &display, .binding = &binding, .serial = &resource_serial };
+}
 fn registerInterrupts() Error!void {
     if (gpu.pci.interrupt_pin == 0) return error.UnsupportedFeatures;
     const ctx = context();
@@ -157,24 +175,30 @@ fn command(kind: wire.Command, payload: []const u8) Error!void {
     if (try gpu.execute(kind, payload, .ok) != .ok) return error.Rejected;
 }
 fn publishOutputs() Error!void {
-    for (info.modes[0..gpu.num_scanouts], 0..) |mode, index| {
+    const count = @min(gpu.num_scanouts, a.gfx_output_max_assignments);
+    const mask = (@as(u32, 1) << @as(u5, @intCast(count))) - 1;
+    for (info.modes[0..count], 0..) |mode, index| {
+        const head = @as(u32, 1) << @as(u5, @intCast(index));
+        const width = if (index == scanout) boot.width else mode.rectangle.width;
+        const height = if (index == scanout) boot.height else mode.rectangle.height;
         publication = .{ .backend = binding, .info = .{
             .identity = .{ .adapter_id = binding.adapter_id, .connector_id = @intCast(index + 1), .device_generation = binding.device_generation },
-            .connector_kind = a.gfx_output_kind_virtual, .possible_heads = 1, .possible_planes = 1, .possible_plls = 1,
-            .limits = .{ .head_mask = 1, .plane_mask = 1, .pll_mask = 1, .max_width = boot.width, .max_height = boot.height } } };
+            .connector_kind = a.gfx_output_kind_virtual, .possible_heads = head, .possible_planes = head, .possible_plls = head,
+            .limits = .{ .head_mask = mask, .plane_mask = mask, .pll_mask = mask, .max_width = 65536, .max_height = 65536 } } };
         if (mode.enabled != 0) {
             publication.info.flags = a.gfx_output_flag_connected;
-            // This stage supports only the boot-sized primary surface. Host
-            // window dimensions and EDID modes are separate receiver facts.
+            // Each virtual head owns its geometry. The boot primary retains
+            // its original CPU fallback surface; additional heads use the
+            // host's requested geometry and independent presentation queues.
             publication.info.mode_count = 1; publication.info.preferred_mode_id = 1;
-            publication.modes[0] = .{ .mode_id = 1, .width = boot.width, .height = boot.height,
+            publication.modes[0] = .{ .mode_id = 1, .width = width, .height = height,
                 .flags = a.gfx_output_mode_geometry_only | a.gfx_output_mode_preferred };
             if (gpu.accepted_features & wire.feature_edid != 0) {
                 try gpu.getEdid(@intCast(index), &edid);
                 publication.info.edid_bytes = edid.length;
                 @memcpy(publication.edid[0..edid.length], edid.data[0..edid.length]);
                 gfx.edid.parse(edid.data[0..edid.length], &report) catch { report = .{}; report.warnings = gfx.edid.Warning.malformed; };
-                log("VIRTGPU output={d} host-request={d}x{d} edid={d} receiver-modes={d} warnings={x} source=fixed-boot-geometry", .{ index + 1, mode.rectangle.width, mode.rectangle.height, edid.length, report.mode_count, report.warnings });
+                log("VIRTGPU output={d} host-request={d}x{d} edid={d} receiver-modes={d} warnings={x} surface={d}x{d}", .{ index + 1, mode.rectangle.width, mode.rectangle.height, edid.length, report.mode_count, report.warnings, width, height });
             }
         }
         if (outputs.publish(&publication, &identities[index]) != a.gfx_output_ok) return error.Rejected;
@@ -184,6 +208,10 @@ fn fullRect() wire.Rect { return .{ .width = boot.width, .height = boot.height }
 fn upload(rectangle: wire.Rect, offset: u64) Error!void {
     const transfer = wire.Transfer{ .rectangle = rectangle, .offset = offset, .resource = resource };
     try command(.transfer_2d, std.mem.asBytes(&transfer));
+    if (scanouts.primaryPresented(scanout)) {
+        try command(.set_scanout, std.mem.asBytes(&wire.Scanout{ .rectangle = fullRect(), .scanout = scanout, .resource = resource }));
+        scanouts.primaryRestored(scanout);
+    }
     const flush = wire.Flush{ .rectangle = rectangle, .resource = resource };
     try command(.flush, std.mem.asBytes(&flush));
 }
@@ -195,6 +223,7 @@ fn releaseInitialRead() bool {
 }
 fn resetForBoot() bool {
     if (!gpu.reset()) return false;
+    scanouts.resetAcknowledged(scanoutContext());
     scanout_active = false;
     created = false; attached = false;
     return releaseInitialRead();
@@ -231,6 +260,10 @@ fn notify(_: usize) callconv(.c) i32 {
         // presentation observes the failed transport and performs recovery.
         for (identities[0..gpu.num_scanouts]) |identity| _ = outputs.withdraw(&identity);
     };
+    scanouts.reconcile(scanoutContext(), &info, identities[0..gpu.num_scanouts], scanout) catch |err| {
+        log("VIRTGPU outputs: error={s}; native recovery required", .{@errorName(err)});
+        gpu.ready = false;
+    };
     var job: a.GfxDriverJob = .{};
     const taken = queues.take(&binding, &job);
     if (taken == a.gfx_queue_error_busy or taken == a.gfx_queue_error_device_lost or taken == a.gfx_queue_error_stale) return 0;
@@ -239,6 +272,11 @@ fn notify(_: usize) callconv(.c) i32 {
     if (gpu.ready and job.operation == a.gfx_queue_operation_barrier) {
         gpu.getDisplayInfo(&info) catch return finish(&job, false);
         success = true;
+    } else if (gpu.ready and scanout_active and job.operation == a.gfx_queue_operation_present) {
+        success = scanouts.present(scanoutContext(), &job) catch {
+            if (scanouts.sourceHeld(job.fence)) gpu.ready = false;
+            return finish(&job, false);
+        };
     } else if (gpu.ready and scanout_active and job.operation == a.gfx_queue_operation_upload and
         std.meta.eql(job.source_buffer, buffer.buffer) and
         job.target_buffer.id == 0 and job.target_offset == 0)
@@ -258,7 +296,7 @@ fn notify(_: usize) callconv(.c) i32 {
 fn finish(job: *const a.GfxDriverJob, success: bool) i32 {
     // A validated device error has completed physically. A timeout, bad used
     // entry or missing response cannot release the queue's source lease.
-    const quiesced: u32 = @intFromBool(gpu.command_owner.pending == 0 and !gpu.command_owner.poisoned);
+    const quiesced: u32 = @intFromBool(gpu.command_owner.pending == 0 and !gpu.command_owner.poisoned and !scanouts.sourceHeld(job.fence));
     return if (queues.complete(&job.fence, if (success) a.gfx_queue_result_complete else a.gfx_queue_result_failed, quiesced) == a.gfx_queue_ok) 0 else -1;
 }
 pub fn shutdown() bool {
@@ -305,6 +343,7 @@ pub fn shutdown() bool {
 }
 fn releaseStorage() bool {
     if (!stopInterrupts()) return shutdownFailed(-16);
+    if (!scanouts.releaseAfterReset(scanoutContext())) return shutdownFailed(-21);
     if (attachment.lease.id != 0) {
         if (memory.deviceRelease(&attachment, 1) != a.gfx_buffer_result_ok) return shutdownFailed(-17);
         attachment = .{};

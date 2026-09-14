@@ -75,6 +75,19 @@ pub const Descriptor = extern struct { address: u64 = 0, length: u32 = 0, flags:
 pub const Used = extern struct { head: u32 = 0, length: u32 = 0 };
 pub const Error = error{ UnsupportedFeatures, Invalid, Malformed, Stale, Busy, Exhausted };
 
+/// Some transports report their whole 1024-byte EDID response array. Strip
+/// only zero padding beyond a checksum-valid base's declared block count;
+/// missing blocks and nonzero extra data remain visible to the EDID parser.
+pub fn normalizeEdid(value: *EdidReply) Error!void {
+    if (value.length > max_edid or value.length % 128 != 0 or value.padding != 0) return error.Malformed;
+    if (value.length < 128 or !std.mem.eql(u8, value.data[0..8], &.{ 0, 255, 255, 255, 255, 255, 255, 0 })) return;
+    var sum: u8 = 0;
+    for (value.data[0..128]) |byte| sum +%= byte;
+    if (sum != 0) return;
+    const declared = (@as(u32, value.data[126]) + 1) * 128;
+    if (declared <= value.length and std.mem.allEqual(u8, value.data[declared..value.length], 0)) value.length = declared;
+}
+
 // A packed XRGB rectangle is represented by its first byte and the span
 // through its last row. Inter-row gaps stay pinned but are not transferred.
 pub fn uploadRegion(width: u32, height: u32, offset: u64, bytes: u64) Error!Rect {
@@ -190,6 +203,22 @@ test "modern features and reply lengths never imply unsupported GPU capabilities
     try t.expectError(error.Invalid, uploadRegion(1280, 720, 4, 5120));
     try t.expectError(error.Invalid, uploadRegion(1280, 720, 0, 3));
     try t.expectError(error.Invalid, uploadRegion(1280, 720, std.math.maxInt(u64) - 3, 8));
+    var edid: EdidReply = .{ .length = 1024 };
+    @memcpy(edid.data[0..8], &[_]u8{ 0, 255, 255, 255, 255, 255, 255, 0 });
+    edid.data[126] = 1; edid.data[127] = 5;
+    try normalizeEdid(&edid);
+    try t.expectEqual(@as(u32, 256), edid.length);
+    edid.length = 1024; edid.data[256] = 1;
+    try normalizeEdid(&edid);
+    try t.expectEqual(@as(u32, 1024), edid.length);
+    edid.length = 128;
+    try normalizeEdid(&edid);
+    try t.expectEqual(@as(u32, 128), edid.length);
+    edid.length = 1024; edid.data[256] = 0; edid.data[127] ^= 1;
+    try normalizeEdid(&edid);
+    try t.expectEqual(@as(u32, 1024), edid.length);
+    edid.padding = 1;
+    try t.expectError(error.Malformed, normalizeEdid(&edid));
 }
 
 test "cancel and malformed DMA completion retain ownership until validated completion or reset" {

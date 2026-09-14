@@ -19,7 +19,7 @@ export fn virtgpu_init(api: *const r4os.r4dev.DriverApi) callconv(.c) i32 {
         const fault = std.ascii.eqlIgnoreCase(mode, "timeout");
         if (mode.len != 0 and !fault and !std.ascii.eqlIgnoreCase(mode, "native")) return -2;
         native.init(api, &device, fault) catch |err| {
-            log("VIRTGPU native: error={s} phase={s} status={d}", .{ @errorName(err), @tagName(device.phase), device.last_status });
+            log("VIRTGPU native: error={s} step={s} phase={s} status={d}", .{ @errorName(err), native.init_stage, @tagName(device.phase), device.last_status });
             _ = native.shutdown();
             return -3;
         };

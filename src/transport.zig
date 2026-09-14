@@ -309,7 +309,7 @@ pub const Transport = struct {
         const request = wire.EdidRequest{ .scanout = scanout };
         if (try self.execute(.get_edid, std.mem.asBytes(&request), .edid) != .edid) return error.Rejected;
         @memcpy(std.mem.asBytes(output), self.response()[0..@sizeOf(wire.EdidReply)]);
-        if (output.length > wire.max_edid or output.length % 128 != 0 or output.padding != 0) return error.Malformed;
+        try wire.normalizeEdid(output);
     }
 
     // Caller must hold display takeover/recovery when a native scanout is
