@@ -46,7 +46,7 @@ The normative protocol is OASIS Virtio 1.3, sections 2, 4.1 and 5.7. Linux/QEMU
 implementations remain external reference material and are not copied here.
 
 API-Migration 0.90.53: VirtioGpu 0.1.8
-Aktueller Einstieg DriverInit2/DriverApi2/Query2:2 mit SDK194/Contract93.
+Aktueller Einstieg DriverInit2/DriverApi2/Query2:2 mit SDK195/Contract93.
 Die technischen API2-Callbacks werden wirklich ueber die neue Tabelle
 aufgerufen; eigenstaendige Grafik-/Memory-/Thread-/Resource-Records
 behalten ihre eigene Revision1. Alte DriverApi-Versionszahlen in den
