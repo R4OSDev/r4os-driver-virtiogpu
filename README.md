@@ -44,3 +44,18 @@ the reset or cleanup protocol. See the German documentation for the mapping.
 See `DOCUMENTATION.de.txt`, `LICENSE`, `NOTICE` and `THIRD_PARTY_NOTICES.md`.
 The normative protocol is OASIS Virtio 1.3, sections 2, 4.1 and 5.7. Linux/QEMU
 implementations remain external reference material and are not copied here.
+
+API-Migration 0.90.53: VirtioGpu 0.1.8
+Aktueller Einstieg DriverInit2/DriverApi2/Query2:2 mit SDK194/Contract93.
+Die technischen API2-Callbacks werden wirklich ueber die neue Tabelle
+aufgerufen; eigenstaendige Grafik-/Memory-/Thread-/Resource-Records
+behalten ihre eigene Revision1. Alte DriverApi-Versionszahlen in den
+folgenden historischen Abschnitten beschreiben den damaligen Stand.
+Pflichtfaehigkeiten und optionale passive/software Modi bleiben getrennt.
+Shared DriverPollBudget begrenzt die AMD4096-Versuche und NVIDIA8-Schritt-
+Callbacks zusaetzlich zu ihren urspruenglichen Zeitgrenzen. Ablauf bestaetigt
+weder Work noch DMA, Mapping, GPU-Fence oder Unload. Bestehende Original-
+Ownerorakel bleiben erhalten. Konkrete Host-/Windowskompilat-/native
+Modellbelege und physische Grenzen: Docs/API/ConsumerMigration.txt und
+Research/API-ABI/Migration/0.90.53/Abnahme.json. AMD/NVIDIA-Hardware und
+bekannte NVIDIA-Hang-/Shutdownbefunde werden dadurch nicht abgenommen.

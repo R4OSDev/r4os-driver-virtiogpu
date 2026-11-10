@@ -1,4 +1,4 @@
-// Modern split-ring Virtio-PCI transport. DriverApi's wait-spanning owner
+// Modern split-ring Virtio-PCI transport. DriverApi2's wait-spanning owner
 // serializes task callers. IRQ handlers must never call these RPC methods.
 const std = @import("std");
 const r4os = @import("r4os");
@@ -23,7 +23,7 @@ pub const Transport = struct {
     phase: enum { idle, memory, discovery, mmio, features, queue, commands } = .idle,
     last_status: i32 = 0,
     last_address: u64 = 0,
-    api: ?*const a.DriverApi = null,
+    api: ?*const a.DriverApi2 = null,
     memory: ?r4os.driver_memory.Context = null,
     pci: a.PciDeviceInfo = .{},
     windows: [6]a.GfxMmioWindow = .{a.GfxMmioWindow{}} ** 6,
@@ -51,13 +51,13 @@ pub const Transport = struct {
         return barBase(&ctx, self.pci, 0);
     }
 
-    fn context(self: *const Transport) r4os.r4dev.DriverContext {
-        return r4os.r4dev.DriverContext.init(self.api.?);
+    fn context(self: *const Transport) r4os.r4dev.DriverContext2 {
+        return r4os.r4dev.DriverContext2.init(self.api.?);
     }
-    fn readConfig8(ctx: *const r4os.r4dev.DriverContext, pci: a.PciDeviceInfo, offset: u16) u8 {
+    fn readConfig8(ctx: *const r4os.r4dev.DriverContext2, pci: a.PciDeviceInfo, offset: u16) u8 {
         return @truncate(ctx.pciReadConfig32(pci, offset & ~@as(u16, 3)) >> @as(u5, @intCast((offset & 3) * 8)));
     }
-    fn barBase(ctx: *const r4os.r4dev.DriverContext, pci: a.PciDeviceInfo, index: u8) Error!u64 {
+    fn barBase(ctx: *const r4os.r4dev.DriverContext2, pci: a.PciDeviceInfo, index: u8) Error!u64 {
         if (index >= 6) return error.Invalid;
         var prior: u8 = 0;
         while (prior < index) : (prior += 1) {
@@ -83,9 +83,9 @@ pub const Transport = struct {
 
     // Discovery performs only config reads and owner-bound CPU mappings.
     // No BAR sizing write, reset or scanout operation is hidden here.
-    pub fn discover(self: *Transport, api: *const a.DriverApi) Error!void {
+    pub fn discover(self: *Transport, api: *const a.DriverApi2) Error!void {
         if (self.api != null) return error.Busy;
-        const ctx = r4os.r4dev.DriverContext.init(api);
+        const ctx = r4os.r4dev.DriverContext2.init(api);
         self.api = api;
         self.phase = .memory;
         self.memory = ctx.memory() orelse return error.Mapping;

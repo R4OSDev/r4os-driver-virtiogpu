@@ -8,7 +8,7 @@ const Transport = @import("transport.zig").Transport;
 const Error = @import("transport.zig").Error;
 const gfx = @import("r4gfx_outputs");
 const scanouts = @import("scanouts.zig");
-var api: ?*const a.DriverApi = null;
+var api: ?*const a.DriverApi2 = null;
 var gpu: *Transport = undefined;
 var memory: r4os.driver_memory.Context = undefined;
 var queues: r4os.driver_queue.Context = undefined;
@@ -47,7 +47,7 @@ fn shutdownFailed(code: i32) bool {
     return false;
 }
 
-pub fn init(driver_api: *const a.DriverApi, transport: *Transport, fault: bool) Error!void {
+pub fn init(driver_api: *const a.DriverApi2, transport: *Transport, fault: bool) Error!void {
     if (api != null) return error.Busy;
     api = driver_api; gpu = transport; fault_mode = fault;
     const ctx = context();
@@ -126,7 +126,7 @@ pub fn init(driver_api: *const a.DriverApi, transport: *Transport, fault: bool) 
     configEvent(); // Catch an event arriving before interrupt admission.
     log("VIRTGPU native: OK adapter={x} scanout={d} mode={d}x{d} backing-pages={d} completion=device-execution vblank=unknown", .{ binding.adapter_id, scanout, boot.width, boot.height, count });
 }
-fn context() r4os.r4dev.DriverContext { return r4os.r4dev.DriverContext.init(api.?); }
+fn context() r4os.r4dev.DriverContext2 { return r4os.r4dev.DriverContext2.init(api.?); }
 fn scanoutContext() scanouts.Context {
     return .{ .gpu = gpu, .memory = &memory, .queue = &queues, .display = &display, .binding = &binding, .serial = &resource_serial };
 }

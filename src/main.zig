@@ -4,15 +4,15 @@ const wire = @import("wire.zig");
 const transport = @import("transport.zig");
 const native = @import("native.zig");
 var device: transport.Transport = .{};
-var driver_api: ?*const r4os.abi.DriverApi = null;
+var driver_api: ?*const r4os.abi.DriverApi2 = null;
 
 comptime {
-    asm (r4os.r4dev.driverEntriesAsm("virtgpu_init", "virtgpu_shutdown"));
+    if (!@import("builtin").is_test) asm (r4os.technical2.driverEntriesAsm("virtgpu_init", "virtgpu_shutdown"));
 }
 
-export fn virtgpu_init(api: *const r4os.r4dev.DriverApi) callconv(.c) i32 {
-    const ctx = r4os.r4dev.DriverContext.init(api);
-    if (!ctx.apiCompatible()) return -1;
+export fn virtgpu_init(api: *const r4os.r4dev.DriverApi2) callconv(.c) i32 {
+    const ctx = r4os.r4dev.DriverContext2.init(api);
+    if (!ctx.requires(.{"get_option", "pci_device_count", "pci_device_at", "tick_count", "timer_frequency", "wait_ticks"})) return -1;
     driver_api = api;
     const mode = std.mem.span(ctx.getOption("VIRTGPU", "mode"));
     if (!std.ascii.eqlIgnoreCase(mode, "probe")) {
@@ -41,7 +41,7 @@ export fn virtgpu_shutdown() callconv(.c) i32 {
     return if (device.close()) 0 else -1;
 }
 
-fn probe(api: *const r4os.abi.DriverApi) transport.Error!void {
+fn probe(api: *const r4os.abi.DriverApi2) transport.Error!void {
     try device.discover(api);
     try device.initialize(true);
     var info: wire.DisplayReply = .{};
@@ -63,6 +63,6 @@ fn probe(api: *const r4os.abi.DriverApi) transport.Error!void {
 fn log(comptime format: []const u8, args: anytype) void {
     var buffer: [256]u8 = undefined;
     const text = std.fmt.bufPrintZ(&buffer, format, args) catch return;
-    const ctx = r4os.r4dev.DriverContext.init(driver_api orelse return);
+    const ctx = r4os.r4dev.DriverContext2.init(driver_api orelse return);
     ctx.logInfo(text.ptr);
 }

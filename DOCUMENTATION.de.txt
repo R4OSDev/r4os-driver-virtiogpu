@@ -108,3 +108,18 @@ Keine Aussage ueber NVIDIA, physisches HDMI/DP, HDMI-Audio, VBlank,
 Hardwarecursor, echte Pageflips, 3D, VRR oder neue produktive Bildschirmmodi.
 Die QEMU-Abnahme benoetigt OssiPC nicht. Originalcode Apache2; fremde Parserdaten MIT mit
 vollstaendiger libdisplay-info-Provenienz im Libraries-Besitzer.
+
+API-Migration 0.90.53: VirtioGpu 0.1.8
+Aktueller Einstieg DriverInit2/DriverApi2/Query2:2 mit SDK194/Contract93.
+Die technischen API2-Callbacks werden wirklich ueber die neue Tabelle
+aufgerufen; eigenstaendige Grafik-/Memory-/Thread-/Resource-Records
+behalten ihre eigene Revision1. Alte DriverApi-Versionszahlen in den
+folgenden historischen Abschnitten beschreiben den damaligen Stand.
+Pflichtfaehigkeiten und optionale passive/software Modi bleiben getrennt.
+Shared DriverPollBudget begrenzt die AMD4096-Versuche und NVIDIA8-Schritt-
+Callbacks zusaetzlich zu ihren urspruenglichen Zeitgrenzen. Ablauf bestaetigt
+weder Work noch DMA, Mapping, GPU-Fence oder Unload. Bestehende Original-
+Ownerorakel bleiben erhalten. Konkrete Host-/Windowskompilat-/native
+Modellbelege und physische Grenzen: Docs/API/ConsumerMigration.txt und
+Research/API-ABI/Migration/0.90.53/Abnahme.json. AMD/NVIDIA-Hardware und
+bekannte NVIDIA-Hang-/Shutdownbefunde werden dadurch nicht abgenommen.

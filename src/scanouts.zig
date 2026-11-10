@@ -266,5 +266,5 @@ pub fn releaseAfterReset(ctx: Context) bool {
 fn log(ctx: Context, comptime format: []const u8, args: anytype) void {
     var bytes: [256]u8 = undefined;
     const message = std.fmt.bufPrintZ(&bytes, format, args) catch return;
-    r4os.r4dev.DriverContext.init(ctx.gpu.api.?).logInfo(message.ptr);
+    r4os.r4dev.DriverContext2.init(ctx.gpu.api.?).logInfo(message.ptr);
 }
