@@ -20,6 +20,13 @@ NVIDIA acceleration, 3D or VRR. The first stage uses one serialized shadow BO
 and bounded synchronous control RPCs; later swapchain work can replace that
 policy through the same ownership contracts.
 
+Module 0.1.9 keeps the first 65536 unsuccessful completion probes in shared
+memory, with a CPU pause between probes. Only the subsequent sleeping phase
+reads device status and the clock, retaining the original two-second deadline,
+completion validation and DMA retention on failure. This does not enable used
+interrupts or batch commands: one fenced command still owns the shared request
+and reply area until completion or an acknowledged reset.
+
 `Build.bat` / `./Build.sh` builds the driver through shared PS7 logic and mapped
 local SDK/Contract/Libraries checkouts. `unit-test` runs the two bounded wire,
 feature, rectangle and completion-lifetime cases. The manifest owns version,

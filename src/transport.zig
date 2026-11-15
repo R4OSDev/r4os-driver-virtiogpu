@@ -280,6 +280,14 @@ pub const Transport = struct {
                 _ = self.acknowledgeInterrupt();
                 return result;
             }
+            // A bounded shared-memory burst lets asynchronous replies arrive
+            // without MMIO exits or entering the tick wait after only 128 pauses.
+            // Status and clock checks follow when this active burst is exhausted.
+            if (spins < 65536) {
+                spins += 1;
+                asm volatile ("pause");
+                continue;
+            }
             if (read(u8, self.common + 0x14) & (Status.needs_reset | Status.failed) != 0) {
                 self.ready = false;
                 return error.DeviceLost;
@@ -289,10 +297,7 @@ pub const Transport = struct {
                 self.ready = false;
                 return error.Timeout;
             }
-            if (spins < 128) {
-                spins += 1;
-                asm volatile ("pause");
-            } else ctx.waitTicks(1);
+            ctx.waitTicks(1);
         }
     }
     pub fn getDisplayInfo(self: *Transport, output: *wire.DisplayReply) Error!void {
