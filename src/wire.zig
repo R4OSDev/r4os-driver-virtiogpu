@@ -103,6 +103,29 @@ pub fn uploadRegion(width: u32, height: u32, offset: u64, bytes: u64) Error!Rect
     return rect;
 }
 
+/// Offset is in producer pitch; the returned rectangle is in packed host pixels.
+pub fn presentRegion(width: u32, height: u32, pitch: u64, offset: u64, row_bytes: u64, rows: u32) Error!Rect {
+    const row_pixel_bytes = @as(u64, width) * 4;
+    if (width == 0 or height == 0 or pitch < row_pixel_bytes or row_bytes == 0 or row_bytes & 3 != 0 or rows == 0) return error.Invalid;
+    const x = offset % pitch; const y = offset / pitch;
+    if (x & 3 != 0 or x >= row_pixel_bytes or row_bytes > row_pixel_bytes - x or y >= height or rows > height - y) return error.Invalid;
+    return .{ .x = @intCast(x / 4), .y = @intCast(y), .width = @intCast(row_bytes / 4), .height = rows };
+}
+/// Adjacent DMA ranges may share one bounded Virtio backing entry. The
+/// caller already excluded row padding before offering each fragment.
+pub fn appendBacking(entries: []align(1) Memory, count: *u32, item: Memory) Error!void {
+    if (item.address == 0 or item.length == 0 or item.padding != 0 or item.address > std.math.maxInt(u64) - @as(u64, item.length) or count.* > entries.len) return error.Invalid;
+    if (count.* != 0) {
+        const prior = &entries[count.* - 1];
+        if (prior.address <= std.math.maxInt(u64) - @as(u64, prior.length) and prior.address + prior.length == item.address and
+            item.length <= std.math.maxInt(u32) - prior.length) {
+            prior.length += item.length; return;
+        }
+    }
+    if (count.* == entries.len) return error.Invalid;
+    entries[count.*] = item; count.* += 1;
+}
+
 // Only features backed by this implementation are acknowledged. In
 // particular, virgl/blobs/context-init/packed-rings are never inferred.
 pub fn features(offered: u64) Error!u64 {
@@ -184,6 +207,17 @@ comptime {
 
 test "modern features and reply lengths never imply unsupported GPU capabilities" {
     const t = std.testing;
+    try t.expectEqualDeep(Rect{ .x = 1, .y = 2, .width = 2, .height = 1 }, try presentRegion(8, 5, 37, 2 * 37 + 4, 8, 1));
+    try t.expectError(error.Invalid, presentRegion(8, 5, 37, 32, 4, 1));
+    try t.expectError(error.Invalid, presentRegion(8, 5, 37, 4 * 37, 4, 2));
+    var entries: [2]Memory = undefined; var count: u32 = 0;
+    try appendBacking(&entries, &count, .{ .address = 4096, .length = 4096 });
+    try appendBacking(&entries, &count, .{ .address = 8192, .length = 4096 });
+    try t.expectEqual(@as(u32, 1), count);
+    try t.expectEqual(@as(u32, 8192), entries[0].length);
+    try appendBacking(&entries, &count, .{ .address = 16384, .length = 4 });
+    try t.expectError(error.Invalid, appendBacking(&entries, &count, .{ .address = 32768, .length = 4 }));
+    try t.expectEqual(@as(u32, 2), count);
     try t.expectError(error.UnsupportedFeatures, features(0xffff_ffff));
     try t.expectEqual(feature_version_1 | feature_edid, try features(std.math.maxInt(u64)));
     var data = DisplayReply{ .header = .{ .kind = @intFromEnum(Response.display_info), .fence = 91 } };

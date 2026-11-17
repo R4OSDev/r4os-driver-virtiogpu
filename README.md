@@ -16,9 +16,29 @@ the display is idle; receiver changes invalidate old EDID identities.
 The initial source surface retains its boot geometry. Host resize requests and
 EDID modes are receiver facts, not implemented native modesets. Rendering is
 CPU-based; completion denotes device execution, never visible VBlank, pageflip,
-NVIDIA acceleration, 3D or VRR. The first stage uses one serialized shadow BO
-and bounded synchronous control RPCs; later swapchain work can replace that
-policy through the same ownership contracts.
+NVIDIA acceleration, 3D or VRR. The console keeps its serialized shadow BO. Each native output has two
+host resources and bounded synchronous control RPCs. Module 0.1.10 retains
+backing-only references and device backing leases for at most two producer
+BO identities per output. Actual queue read leases protect each transfer;
+backing retention alone never permits execution or CPU mapping.
+
+R4GFX DEVICE_V1 revision 11 passes conservative physical damage through the
+append-only common operation `gfx_queue_operation_present_region` (bit 12,
+with complete-image present bit 5). First use or a replaced host resource
+transfers the complete image. Warm matching BO/generation/pitch identities
+transfer and flush only the requested region; producer padding stays outside
+packed Virtio backing. Adjacent DMA fragments share entries, and packed
+images require one whole-extent segment walk only on attachment. Full present
+remains valid; no 3D/direct-scanout capability or additional queue is implied.
+
+A gone or drained closing producer queue triggers validated detach and release
+of its cached backing loans. Output removal detaches before releasing them;
+uncertain control completion retains source and backing until acknowledged
+reset. The existing 64 MB image limit and two host resources remain unchanged.
+Diagnostic work totals distinguish segment queries, attachments, detaches,
+control commands and actual transfer bytes; first frames and powers of two
+are logged. Hardware cursor queue support remains absent: software-cursor
+damage follows this same bounded presentation path.
 
 Module 0.1.9 keeps the first 65536 unsuccessful completion probes in shared
 memory, with a CPU pause between probes. Only the subsequent sleeping phase

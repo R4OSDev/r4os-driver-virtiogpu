@@ -74,7 +74,7 @@ pub fn init(driver_api: *const a.DriverApi2, transport: *Transport, fault: bool)
     if (!found) return error.NotFound;
     const adapter = 0x0100_0000 | (@as(u32, gpu.pci.bus) << 8) | (@as(u32, gpu.pci.device) << 3) | gpu.pci.function;
     const registration = a.GfxBackendRegistration{ .adapter_id = adapter, .milestone = a.gfx_queue_milestone_device_execution,
-        .operations = 38, .notify_callback = @intFromPtr(&notify) }; // Barrier, primary upload and complete-image present.
+        .operations = 38 | (@as(u64, 1) << a.gfx_queue_operation_present_region), .notify_callback = @intFromPtr(&notify) }; // Barrier, primary upload and complete-image present.
     init_stage = "backend";
     if (queues.register(&registration, &binding) != a.gfx_queue_ok) return error.Rejected;
     gpu.config_notify = configEvent;
@@ -266,13 +266,17 @@ fn notify(_: usize) callconv(.c) i32 {
     };
     var job: a.GfxDriverJob = .{};
     const taken = queues.take(&binding, &job);
-    if (taken == a.gfx_queue_error_busy or taken == a.gfx_queue_error_device_lost or taken == a.gfx_queue_error_stale) return 0;
+    if (taken == a.gfx_queue_error_busy) {
+        scanouts.collect(scanoutContext()) catch return -1;
+        return 0;
+    }
+    if (taken == a.gfx_queue_error_device_lost or taken == a.gfx_queue_error_stale) return 0;
     if (taken != a.gfx_queue_ok) return -1;
     var success = false;
     if (gpu.ready and job.operation == a.gfx_queue_operation_barrier) {
         gpu.getDisplayInfo(&info) catch return finish(&job, false);
         success = true;
-    } else if (gpu.ready and scanout_active and job.operation == a.gfx_queue_operation_present) {
+    } else if (gpu.ready and scanout_active and (job.operation == a.gfx_queue_operation_present or job.operation == a.gfx_queue_operation_present_region)) {
         success = scanouts.present(scanoutContext(), &job) catch {
             if (scanouts.sourceHeld(job.fence)) gpu.ready = false;
             return finish(&job, false);

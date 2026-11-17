@@ -123,3 +123,24 @@ Ownerorakel bleiben erhalten. Konkrete Host-/Windowskompilat-/native
 Modellbelege und physische Grenzen: Docs/API/ConsumerMigration.txt und
 Research/API-ABI/Migration/0.90.53/Abnahme.json. AMD/NVIDIA-Hardware und
 bekannte NVIDIA-Hang-/Shutdownbefunde werden dadurch nicht abgenommen.
+
+0.92.10 / Modul 0.1.10: stabile Backings und Schadensregionen
+---------------------------------------------------------
+Der vorhandene Queuevertrag retainResource haelt ausschliesslich Backing.
+Zwei Hostressourcen je Ausgabe behalten exakte BO-/Generations-/Pitch-
+Identitaeten und eigene Backingleihen; echte Queue-Leseleihen schuetzen jeden
+Transfer. Bei geschlossenem/drainiertem Producer werden zuerst DETACH und
+anschliessend Leasen/Referenzen freigegeben. Ungewisser DMA-Abschluss behaelt
+alle Leihen bis zum bestaetigten Reset; Reset und Ausgabeabbau schliessen den
+Cache explizit. Die bisherige Bildgrenze von 64 MB bleibt bestehen.
+
+R4GFX DEVICE_V1:11 uebergibt eine kopierte physische Schadensregion ueber die
+zusaetzliche Plattformoperation12. Nur vollstaendig gueltige Quellbilder sind
+zulaessig. Der Kernel behaelt die ganze Quelle und prueft Pitch, Offset und
+Grenzen; unbekannte Hostressourcen werden voll initialisiert. Warme Ressourcen
+verwenden lokale TRANSFER/FLUSH-Rechtecke und gepackte Backings ohne Padding.
+Zusammenhaengende DMA-Fragmente teilen einen Eintrag. Ohne beworbene optionale
+Operation nutzt R4GFX weiterhin den vollstaendigen Presentpfad.
+Die Cursorqueue wird nicht beworben; Softwarecursor und alte/neue Position
+bleiben Bestandteil des vorhandenen Damageverlaufs. QEMU-/Modellbelege und
+Messgrenzen stehen in Docs/Desktop/Performance092.txt im Dokumentationsrepo.
